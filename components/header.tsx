@@ -53,24 +53,20 @@ export async function Header() {
           )}
         </div>
       </div>
+      <div className="flex items-center">
+        <h1 className="text-lg font-semibold">
+          Ask-SspAI
+        </h1>
+      </div>
       <div className="flex items-center justify-end space-x-2">
         <a
           target="_blank"
-          href="https://github.com/thorwebdev/vercel-ai-chatbot"
+          href="https://github.com/xleven/ask-sspai"
           rel="noopener noreferrer"
           className={cn(buttonVariants({ variant: 'outline' }))}
         >
           <IconGitHub />
           <span className="ml-2 hidden md:flex">GitHub</span>
-        </a>
-        <a
-          href="https://github.com/thorwebdev/vercel-ai-chatbot"
-          target="_blank"
-          className={cn(buttonVariants())}
-        >
-          <IconVercel className="mr-2" />
-          <span className="hidden sm:block">Deploy to Vercel</span>
-          <span className="sm:hidden">Deploy</span>
         </a>
       </div>
     </header>
