@@ -1,71 +1,106 @@
 import 'server-only'
-import { OpenAIStream, StreamingTextResponse } from 'ai'
-import { Configuration, OpenAIApi } from 'openai-edge'
-import { createRouteHandlerClient } from '@supabase/auth-helpers-nextjs'
+import {
+  LangChainStream,
+  StreamingTextResponse,
+} from 'ai'
+import { NextRequest, NextResponse } from 'next/server'
 import { cookies } from 'next/headers'
-import { Database } from '@/lib/db_types'
+import { createRouteHandlerClient } from '@supabase/auth-helpers-nextjs'
+
+import { ChatOpenAI } from 'langchain/chat_models/openai'
+import { OpenAIEmbeddings } from 'langchain/embeddings/openai'
+import { SupabaseVectorStore } from 'langchain/vectorstores/supabase'
+import { Document } from 'langchain/document'
+import { StringOutputParser } from 'langchain/schema/output_parser'
+import { RunnableSequence, RunnablePassthrough } from 'langchain/schema/runnable'
+import * as hub from "langchain/hub"
 
 import { auth } from '@/auth'
 import { nanoid } from '@/lib/utils'
+import { Database } from '@/lib/db_types'
+
 
 export const runtime = 'edge'
 
-const configuration = new Configuration({
-  apiKey: process.env.OPENAI_API_KEY
-})
 
-const openai = new OpenAIApi(configuration)
-
-export async function POST(req: Request) {
+export async function POST(req: NextRequest) {
   const cookieStore = cookies()
   const supabase = createRouteHandlerClient<Database>({
     cookies: () => cookieStore
   })
-  const json = await req.json()
-  const { messages, previewToken } = json
   const userId = (await auth({ cookieStore }))?.user.id
 
   if (!userId) {
-    return new Response('Unauthorized', {
+    return new NextResponse('Unauthorized', {
       status: 401
     })
   }
 
-  if (previewToken) {
-    configuration.apiKey = previewToken
-  }
-
-  const res = await openai.createChatCompletion({
-    model: 'gpt-3.5-turbo',
-    messages,
-    temperature: 0.7,
-    stream: true
-  })
-
-  const stream = OpenAIStream(res, {
-    async onCompletion(completion) {
-      const title = json.messages[0].content.substring(0, 100)
-      const id = json.id ?? nanoid()
-      const createdAt = Date.now()
-      const path = `/chat/${id}`
-      const payload = {
-        id,
-        title,
-        userId,
-        createdAt,
-        path,
-        messages: [
-          ...messages,
-          {
-            content: completion,
-            role: 'assistant'
-          }
-        ]
+  try {
+    const json = await req.json()
+    const { messages, previewToken } = json
+    const currentMessageContent = messages[messages.length - 1].content
+    
+    const { stream, handlers } = LangChainStream({
+      async onCompletion(completion) {
+        const title = json.messages[0].content.substring(0, 100)
+        const id = json.id ?? nanoid()
+        const createdAt = Date.now()
+        const path = `/chat/${id}`
+        const payload = {
+          id,
+          title,
+          userId,
+          createdAt,
+          path,
+          messages: [
+            ...messages,
+            {
+              content: completion,
+              role: 'assistant'
+            }
+          ]
+        }
+        // Insert chat into database.
+        await supabase.from('chats').upsert({ id, payload }).throwOnError()
       }
-      // Insert chat into database.
-      await supabase.from('chats').upsert({ id, payload }).throwOnError()
-    }
-  })
+    })
+    
+    const apiKey = previewToken || process.env.OPENAI_API_KEY
+    const prompt = await hub.pull("xleven/ask-sspai")
 
-  return new StreamingTextResponse(stream)
+    const embeddings = new OpenAIEmbeddings({ openAIApiKey: apiKey })
+    const vectorStore = new SupabaseVectorStore(embeddings, { client: supabase })
+    const retriever = vectorStore.asRetriever()
+
+    const llm = new ChatOpenAI({
+      openAIApiKey: apiKey,
+      streaming: true,
+      temperature: 0.1,
+    })
+    const outputParser = new StringOutputParser()
+
+    const bot = RunnableSequence.from([
+      {
+        context: retriever.pipe(serializeDocs),
+        question: new RunnablePassthrough(),
+      },
+      prompt,
+      llm,
+      outputParser,
+    ])
+    bot.invoke(
+      currentMessageContent,
+      {callbacks: [handlers]},
+    )
+    return new StreamingTextResponse(stream)
+
+  } catch (e: any) {
+
+    return NextResponse.json({ error: e.message, status: 500 })
+    
+  }
 }
+
+const serializeDocs = (docs: Document[]) =>
+  docs.map((doc) => doc.pageContent).join("\n");
