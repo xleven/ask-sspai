@@ -9,7 +9,6 @@ Unoffical AI chatbot on [Sspai Manual](https://manual.sspai.com/). Built with [N
 
 ## Todo
 - [ ] Support conversation memory
-- [ ] Ask without signing in via provided OpenAI API key
 
 ## License
 
