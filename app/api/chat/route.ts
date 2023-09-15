@@ -6,6 +6,8 @@ import {
 import { NextRequest, NextResponse } from 'next/server'
 import { cookies } from 'next/headers'
 import { createRouteHandlerClient } from '@supabase/auth-helpers-nextjs'
+import { Ratelimit } from '@upstash/ratelimit'
+import { Redis } from '@upstash/redis'
 
 import { ChatOpenAI } from 'langchain/chat_models/openai'
 import { OpenAIEmbeddings } from 'langchain/embeddings/openai'
@@ -23,6 +25,23 @@ import { Database } from '@/lib/db_types'
 export const runtime = 'edge'
 
 
+const redis = Redis.fromEnv()
+
+const ratelimit = {
+  user: new Ratelimit({
+    redis,
+    analytics: true,
+    prefix: '@upstash/ratelimit:user',
+    limiter: Ratelimit.slidingWindow(10, "300 m")
+  }),
+  anno: new Ratelimit({
+    redis,
+    analytics: true,
+    prefix: '@upstash/ratelimit:anno',
+    limiter: Ratelimit.slidingWindow(10, "60 m")
+  })
+}
+
 export async function POST(req: NextRequest) {
   const cookieStore = cookies()
   const supabase = createRouteHandlerClient<Database>({
@@ -33,11 +52,23 @@ export async function POST(req: NextRequest) {
   const { messages, previewToken } = json
   const currentMessageContent = messages[messages.length - 1].content
 
-  if (!userId && !previewToken) {
+  let limit
+  if (previewToken) {
+    limit = await ratelimit.anno.limit(req.ip ?? "annoymous")
+  }
+  else if (userId) {
+    limit = await ratelimit.user.limit(userId)
+  }
+  else {
     return new NextResponse('Unauthorized', {
       status: 401
     })
   }
+  if (!limit.success) 
+    return new NextResponse('Too many requests', {
+      status: 429
+    }
+  )
 
   try {
     const { stream, handlers } = LangChainStream({
