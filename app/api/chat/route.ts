@@ -29,40 +29,41 @@ export async function POST(req: NextRequest) {
     cookies: () => cookieStore
   })
   const userId = (await auth({ cookieStore }))?.user.id
+  const json = await req.json()
+  const { messages, previewToken } = json
+  const currentMessageContent = messages[messages.length - 1].content
 
-  if (!userId) {
+  if (!userId && !previewToken) {
     return new NextResponse('Unauthorized', {
       status: 401
     })
   }
 
   try {
-    const json = await req.json()
-    const { messages, previewToken } = json
-    const currentMessageContent = messages[messages.length - 1].content
-    
     const { stream, handlers } = LangChainStream({
       async onCompletion(completion) {
-        const title = json.messages[0].content.substring(0, 100)
-        const id = json.id ?? nanoid()
-        const createdAt = Date.now()
-        const path = `/chat/${id}`
-        const payload = {
-          id,
-          title,
-          userId,
-          createdAt,
-          path,
-          messages: [
-            ...messages,
-            {
-              content: completion,
-              role: 'assistant'
-            }
-          ]
+        if (userId) {
+          const title = json.messages[0].content.substring(0, 100)
+          const id = json.id ?? nanoid()
+          const createdAt = Date.now()
+          const path = `/chat/${id}`
+          const payload = {
+            id,
+            title,
+            userId,
+            createdAt,
+            path,
+            messages: [
+              ...messages,
+              {
+                content: completion,
+                role: 'assistant'
+              }
+            ]
+          }
+          // Insert chat into database for logged user.
+          await supabase.from('chats').upsert({ id, payload }).throwOnError()
         }
-        // Insert chat into database.
-        await supabase.from('chats').upsert({ id, payload }).throwOnError()
       }
     })
     
