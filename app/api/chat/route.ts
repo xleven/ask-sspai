@@ -31,11 +31,13 @@ const ratelimit = {
   user: new Ratelimit({
     redis,
     analytics: true,
+    prefix: '@upstash/ratelimit:user',
     limiter: Ratelimit.slidingWindow(10, "300 m")
   }),
   anno: new Ratelimit({
     redis,
     analytics: true,
+    prefix: '@upstash/ratelimit:anno',
     limiter: Ratelimit.slidingWindow(10, "60 m")
   })
 }
